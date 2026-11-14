@@ -2,67 +2,201 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>DarkFustro Bot Aktif Edici</title>
+    <title>DarkFustro Bot Kontrol Paneli</title>
     <style>
-        body { background: #111; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        input { padding: 10px; width: 350px; border-radius: 5px; border: none; margin-bottom: 10px; }
-        button { padding: 10px 25px; background: #5865F2; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        #durum { margin-top: 20px; color: #00ff88; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #0f0f13; color: #e0e0e0; margin: 0; display: flex; height: 100vh; }
+        
+        /* Sol Panel (Ayarlar & Sunucular) */
+        #sidebar { width: 280px; background: #18181f; padding: 15px; display: flex; flex-direction: column; border-right: 1px solid #2a2a35; }
+        h2, h3 { color: #a855f7; margin-top: 0; }
+        input, select, button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #2e2e3a; background: #22222b; color: white; }
+        button { background: #7e22ce; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #9333ea; }
+        .status-box { padding: 8px; border-radius: 6px; background: #121217; font-size: 13px; margin-bottom: 15px; color: #4ade80; }
+        
+        /* Orta Panel (Kanallar & Mesajlar) */
+        #main { flex: 1; display: flex; flex-direction: column; padding: 15px; }
+        #chat-box { flex: 1; background: #14141a; border-radius: 8px; padding: 15px; overflow-y: auto; border: 1px solid #2a2a35; margin-bottom: 10px; }
+        .msg { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #1f1f27; }
+        .msg strong { color: #c084fc; }
+        .msg span { font-size: 11px; color: #777; margin-left: 8px; }
+        #send-area { display: flex; gap: 10px; }
+        #send-area input { margin-bottom: 0; flex: 1; }
+        #send-area button { width: 120px; margin-bottom: 0; }
+
+        /* Sağ Panel (Üyeler & Bot Düzenleme) */
+        #rightbar { width: 260px; background: #18181f; padding: 15px; border-left: 1px solid #2a2a35; overflow-y: auto; }
+        .list-item { padding: 6px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .list-item:hover { background: #262630; }
     </style>
 </head>
 <body>
-    <h2>DarkFustro Discord Bot</h2>
-    <input type="password" id="token" placeholder="Yeni Bot Tokenini Buraya Yapıştır">
-    <button onclick="baslat()">Botu Aktif Et</button>
-    <div id="durum">Bekleniyor...</div>
+
+    <!-- SOL PANEL -->
+    <div id="sidebar">
+        <h2>DarkFustro Panel</h2>
+        <input type="password" id="token" placeholder="Bot Tokenini Gir">
+        <button onclick="baglan()">Botu Aktif Et & Bağlan</button>
+        <div class="status-box" id="durum">Durum: Bekleniyor...</div>
+
+        <h3>Sunucu & Kanallar</h3>
+        <select id="sunucular" onchange="kanallariGetir()"><option>Önce bağlan...</option></select>
+        <div id="kanal-listesi" style="overflow-y: auto; flex: 1;"></div>
+    </div>
+
+    <!-- ORTA PANEL (SOHBET) -->
+    <div id="main">
+        <h3 id="aktif-kanal-baslik"># Kanal Seçilmedi</h3>
+        <div id="chat-box">Mesajları görmek için soldan bir kanal seç...</div>
+        <div id="send-area">
+            <input type="text" id="mesaj-input" placeholder="Bot adına mesaj yaz..." onkeypress="if(event.key==='Enter') mesajGonder()">
+            <button onclick="mesajGonder()">Gönder</button>
+        </div>
+    </div>
+
+    <!-- SAĞ PANEL (BOT AYARLARI & ÜYELER) -->
+    <div id="rightbar">
+        <h3>Botu Düzenle</h3>
+        <input type="text" id="bot-isim" placeholder="Yeni Bot Adı">
+        <button onclick="botIsimDegistir()">Adını Güncelle</button>
+        
+        <input type="text" id="bot-durum" placeholder="Oynuyor yazısı (Örn: DarkFustro)">
+        <button onclick="durumGuncelle()">Durumu Güncelle</button>
+
+        <h3 style="margin-top: 20px;">Sunucu Üyeleri</h3>
+        <div id="uye-listesi"></div>
+    </div>
 
     <script>
-        function baslat() {
+        let ws;
+        let seciliKanalId = null;
+        // Tarayıcı CORS engelini aşmak için genel proxy
+        const PROXY = "https://corsproxy.io/?";
+
+        function getHeaders() {
+            return {
+                "Authorization": `Bot ${document.getElementById('token').value}`,
+                "Content-Type": "application/json"
+            };
+        }
+
+        async function apiIstek(endpoint, method = "GET", body = null) {
+            const url = PROXY + encodeURIComponent(`https://discord.com/api/v10${endpoint}`);
+            const options = { method, headers: getHeaders() };
+            if (body) options.body = JSON.stringify(body);
+            const res = await fetch(url, options);
+            return res.json();
+        }
+
+        function baglan() {
             const token = document.getElementById('token').value;
             const durum = document.getElementById('durum');
-            if (!token) return alert("Token gir!");
+            if (!token) return alert("Token girmelisin!");
 
-            durum.innerText = "Discord'a bağlanılıyor...";
-            const ws = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
-
-            ws.onopen = () => {
-                durum.innerText = "Bağlantı kuruldu, giriş yapılıyor...";
-            };
+            durum.innerText = "Bağlanılıyor...";
+            ws = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
 
             ws.onmessage = (event) => {
                 const payload = JSON.parse(event.data);
-                const { op, d } = payload;
-
-                if (op === 10) {
-                    const interval = d.heartbeat_interval;
-                    setInterval(() => {
-                        ws.send(JSON.stringify({ op: 1, d: null }));
-                    }, interval);
-
+                if (payload.op === 10) {
+                    setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), payload.d.heartbeat_interval);
                     ws.send(JSON.stringify({
                         op: 2,
                         d: {
                             token: token,
-                            intents: 513,
+                            intents: 32767, // Tüm izinler
                             properties: { os: "windows", browser: "chrome", device: "pc" },
-                            presence: {
-                                activities: [{ name: "DarkFustro YouTube", type: 0 }],
-                                status: "online",
-                                afk: false
-                            }
+                            presence: { activities: [{ name: "DarkFustro", type: 0 }], status: "online" }
                         }
                     }));
                 }
-
                 if (payload.t === "READY") {
-                    durum.innerText = `AKTİF! (${d.user.username} şu an çevrimiçi)`;
+                    durum.innerText = `Aktif: ${payload.d.user.username}`;
+                    sunuculariGetir();
+                }
+                // Canlı yeni mesaj gelirse ekrana ekle
+                if (payload.t === "MESSAGE_CREATE" && payload.d.channel_id === seciliKanalId) {
+                    mesajEkle(payload.d);
                 }
             };
+        }
 
-            ws.onerror = () => {
-                durum.style.color = "#ff4444";
-                durum.innerText = "Hata! VPN/Proxy açık olduğundan ve tokenin doğru olduğundan emin ol.";
-            };
+        async function sunuculariGetir() {
+            const guilds = await apiIstek("/users/@me/guilds");
+            const select = document.getElementById('sunucular');
+            select.innerHTML = "";
+            guilds.forEach(g => {
+                select.innerHTML += `<option value="${g.id}">${g.name}</option>`;
+            });
+            if (guilds.length > 0) kanallariGetir();
+        }
+
+        async function kanallariGetir() {
+            const guildId = document.getElementById('sunucular').value;
+            const channels = await apiIstek(`/guilds/${guildId}/channels`);
+            const liste = document.getElementById('kanal-listesi');
+            liste.innerHTML = "";
+
+            channels.filter(c => c.type === 0).forEach(c => {
+                liste.innerHTML += `<div class="list-item" onclick="kanalSec('${c.id}', '${c.name}')"># ${c.name}</div>`;
+            });
+            uyeleriGetir(guildId);
+        }
+
+        async function uyeleriGetir(guildId) {
+            const members = await apiIstek(`/guilds/${guildId}/members?limit=50`);
+            const liste = document.getElementById('uye-listesi');
+            liste.innerHTML = "";
+            if (Array.isArray(members)) {
+                members.forEach(m => {
+                    liste.innerHTML += `<div class="list-item">👤 ${m.user.username}</div>`;
+                });
+            } else {
+                liste.innerHTML = "<small>Üyeleri görmek için Developer Portal'dan 'Server Members Intent' ayarını açmalısın.</small>";
+            }
+        }
+
+        async function kanalSec(id, name) {
+            seciliKanalId = id;
+            document.getElementById('aktif-kanal-baslik').innerText = `# ${name}`;
+            const chatBox = document.getElementById('chat-box');
+            chatBox.innerHTML = "Yükleniyor...";
+
+            const messages = await apiIstek(`/channels/${id}/messages?limit=30`);
+            chatBox.innerHTML = "";
+            messages.reverse().forEach(m => mesajEkle(m));
+        }
+
+        function mesajEkle(m) {
+            const chatBox = document.getElementById('chat-box');
+            chatBox.innerHTML += `<div class="msg"><strong>${m.author.username}</strong>: ${m.content}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function mesajGonder() {
+            const input = document.getElementById('mesaj-input');
+            if (!seciliKanalId || !input.value) return;
+            await apiIstek(`/channels/${seciliKanalId}/messages`, "POST", { content: input.value });
+            input.value = "";
+        }
+
+        async function botIsimDegistir() {
+            const yeniIsim = document.getElementById('bot-isim').value;
+            if (!yeniIsim) return;
+            const res = await apiIstek("/users/@me", "PATCH", { username: yeniIsim });
+            if (res.username) alert("Bot adı güncellendi: " + res.username);
+            else alert("Hata: Çok sık isim değiştiremezsin veya isim uygun değil.");
+        }
+
+        function durumGuncelle() {
+            const yeniDurum = document.getElementById('bot-durum').value;
+            if (!ws || !yeniDurum) return;
+            ws.send(JSON.stringify({
+                op: 3,
+                d: { since: null, activities: [{ name: yeniDurum, type: 0 }], status: "online", afk: false }
+            }));
+            alert("Bot durumu güncellendi!");
         }
     </script>
 </body>
